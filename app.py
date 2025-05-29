@@ -5,7 +5,6 @@ from datetime import datetime
 from statsmodels.tsa.arima.model import ARIMA
 import plotly.graph_objs as go
 
-# --- Caching Data Fetch ---
 @st.cache_data
 def fetch_series(code, source='fred', start='2000-01-01', end=None):
     if end is None:
@@ -17,11 +16,10 @@ def fetch_series(code, source='fred', start='2000-01-01', end=None):
         st.error(f"Error fetching {code}: {e}")
         return pd.Series(dtype=float)
 
-# --- Page Configuration ---
+
 st.set_page_config(page_title="MacroInsight Dashboard", layout="wide")
 st.title("📈 MacroInsight Dashboard")
 
-# --- Sidebar Controls ---
 with st.sidebar:
     st.header("Controls")
     series_options = {
@@ -44,7 +42,7 @@ with st.sidebar:
     st.markdown("---")
     upload = st.file_uploader("Or upload your own CSV (date,index and value):", type=["csv"])
 
-# --- Load Data ---
+
 if upload:
     data = pd.read_csv(upload, parse_dates=[0], index_col=0)
     st.success("Custom data loaded")
@@ -60,7 +58,6 @@ else:
         if not df.empty:
             data[name] = df.iloc[:, 0]
 
-# --- Summary Metrics ---
 if not data.empty and len(data.columns) > 0:
     st.markdown("## Latest Metrics")
     cols = st.columns(len(data.columns))
@@ -72,14 +69,12 @@ if not data.empty and len(data.columns) > 0:
 else:
     st.write("No data selected to display metrics.")
 
-# --- Time Series Plot ---
 fig = go.Figure()
 for col in data.columns:
     fig.add_trace(
         go.Scatter(x=data.index, y=data[col], mode='lines', name=col)
     )
 
-# --- ARIMA Forecast ---
 if not data.empty:
     primary = data.iloc[:, 0]
     last_date = primary.index[-1]
@@ -124,7 +119,6 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Download CSV ---
 hist = data.copy()
 if 'fc_mean' in locals():
     hist = hist.join(fc_mean.rename('Forecast'), how='outer')
@@ -134,7 +128,6 @@ st.download_button(
     "Download CSV", csv, "macro_data.csv", "text/csv"
 )
 
-# --- Interpretation & Guidance ---
 st.markdown("---")
 st.header("Interpretation & Guidance")
 st.markdown(
