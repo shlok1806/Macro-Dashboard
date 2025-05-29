@@ -70,8 +70,8 @@ if not data.empty:
         fc_mean = pd.Series(pred.predicted_mean, index=fc_index)
         fc_ci = pd.DataFrame(pred.conf_int(), index=fc_index, columns=['lower', 'upper'])
     fig.add_trace(go.Scatter(x=fc_mean.index, y=fc_mean.values, mode='lines', name='Forecast', line=dict(color='orange', width=2)))
-    fig.add_trace(go.Scatter(x=fc_ci.index, y=fc_ci['upper'], mode='lines', name='Upper CI', line=dict(dash='dash', width=1, color='grey')))
-    fig.add_trace(go.Scatter(x=fc_ci.index, y=fc_ci['lower'], mode='lines', name='Lower CI', fill='tonexty', fillcolor='rgba(128,128,128,0.2)', line=dict(dash='dash', width=1, color='grey')))
+    fig.add_trace(go.Scatter(x=fc_ci.index, y=fc_ci['upper'], mode='lines', name='Upper CI', line=dict(dash='dash', width=1, color='red')))
+    fig.add_trace(go.Scatter(x=fc_ci.index, y=fc_ci['lower'], mode='lines', name='Lower CI', fill='tonexty', fillcolor='rgba(128,128,128,0.2)', line=dict(dash='dash', width=1, color='red')))
 
 fig.update_layout(title="Macro Series & ARIMA Forecast", xaxis_title="Date", yaxis_title="Value", legend=dict(orientation="h", y=-0.2))
 st.plotly_chart(fig, use_container_width=True)
