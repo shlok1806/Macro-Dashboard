@@ -1,82 +1,147 @@
-
 import streamlit as st
+import pandas as pd
 import pandas_datareader.data as web
 from datetime import datetime
 from statsmodels.tsa.arima.model import ARIMA
-import pandas as pd
 import plotly.graph_objs as go
 
-
+# --- Caching Data Fetch ---
+@st.cache_data
 def fetch_series(code, source='fred', start='2000-01-01', end=None):
     if end is None:
         end = datetime.today().strftime('%Y-%m-%d')
-    return web.DataReader(code, source, start, end)
+    try:
+        df = web.DataReader(code, source, start, end)
+        return df.dropna()
+    except Exception as e:
+        st.error(f"Error fetching {code}: {e}")
+        return pd.Series(dtype=float)
 
-def make_arima_forecast(series, order=(1,1,1), steps=12):
-    model = ARIMA(series, order=order)
-    fit = model.fit()
-    fc = fit.get_forecast(steps=steps)
-    return fc.predicted_mean, fc.conf_int()
+# --- Page Configuration ---
+st.set_page_config(page_title="MacroInsight Dashboard", layout="wide")
+st.title("📈 MacroInsight Dashboard")
 
-st.sidebar.header("Choose indicator & forecast horizon")
-indicator = st.sidebar.selectbox(
-    "Indicator",
-    ("GDP", "Unemployment Rate", "CPI")
-)
-horizon = st.sidebar.slider(
-    "Forecast horizon (periods):",
-    min_value=1, max_value=36, value=12
-)
-start_date = st.sidebar.date_input("Start date", datetime(2000,1,1))
-
-fred_codes = {
-    "GDP": "GDP",
-    "Unemployment Rate": "UNRATE",
-    "CPI": "CPIAUCSL"
-}
-series_code = fred_codes[indicator]
-
-data = fetch_series(series_code, start=start_date.isoformat())
-data = data.dropna()
-
-forecast_mean, conf_int = make_arima_forecast(data, steps=horizon)
-
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=data.index, y=data.values.flatten(),
-    name="Actual", mode="lines"
-))
-fig.add_trace(go.Scatter(
-    x=forecast_mean.index, y=forecast_mean.values,
-    name="Forecast", mode="lines"
-))
-fig.add_trace(go.Scatter(
-    x=conf_int.index, y=conf_int.iloc[:,0],
-    name="Lower CI", line=dict(dash="dash")
-))
-fig.add_trace(go.Scatter(
-    x=conf_int.index, y=conf_int.iloc[:,1],
-    name="Upper CI", line=dict(dash="dash")
-))
-fig.update_layout(
-    title=f"{indicator} with {horizon}-period ARIMA Forecast",
-    xaxis_title="Date", yaxis_title=indicator
-)
-
-st.plotly_chart(fig, use_container_width=True)
-st.markdown("""
-**Interpretation:**  
-- The blue line shows historical data.  
-- The orange line is our {order} ARIMA forecast for the next {horizon} periods.  
-- Dashed bands are the 95% confidence interval.  
-""".format(order="(1,1,1)", horizon=horizon))
-if st.sidebar.button("Download historical + forecast"):
-    df_hist = pd.DataFrame(data.values, index=data.index, columns=[indicator])
-    df_fc   = pd.DataFrame(forecast_mean.values, index=forecast_mean.index, columns=[f"{indicator} Forecast"])
-    df_ci   = conf_int
-    download_df = pd.concat([df_hist, df_fc, df_ci], axis=1)
-    st.sidebar.download_button(
-        "CSV",
-        download_df.to_csv().encode('utf-8'),
-        file_name="macro_series_with_forecast.csv"
+# --- Sidebar Controls ---
+with st.sidebar:
+    st.header("Controls")
+    series_options = {
+        "GDP": "GDP",
+        "Unemployment Rate": "UNRATE",
+        "CPI (Inflation)": "CPIAUCSL"
+    }
+    selected = st.multiselect(
+        "Select indicators:", list(series_options.keys()), default=["GDP"]
     )
+    start_date = st.date_input("Start date", datetime(2000, 1, 1))
+    end_date = st.date_input("End date", datetime.today())
+    horizon = st.slider(
+        "Forecast horizon (periods):", min_value=1, max_value=36, value=12
+    )
+    st.markdown("---")
+    p = st.number_input("AR(p):", min_value=0, max_value=5, value=1)
+    d = st.number_input("I(d):", min_value=0, max_value=2, value=1)
+    q = st.number_input("MA(q):", min_value=0, max_value=5, value=1)
+    st.markdown("---")
+    upload = st.file_uploader("Or upload your own CSV (date,index and value):", type=["csv"])
+
+# --- Load Data ---
+if upload:
+    data = pd.read_csv(upload, parse_dates=[0], index_col=0)
+    st.success("Custom data loaded")
+else:
+    data = pd.DataFrame()
+    for name in selected:
+        code = series_options[name]
+        df = fetch_series(
+            code,
+            start=start_date.isoformat(),
+            end=end_date.isoformat()
+        )
+        if not df.empty:
+            data[name] = df.iloc[:, 0]
+
+# --- Summary Metrics ---
+if not data.empty and len(data.columns) > 0:
+    st.markdown("## Latest Metrics")
+    cols = st.columns(len(data.columns))
+    for idx, col in enumerate(data.columns):
+        with cols[idx]:
+            val = data[col].iloc[-1]
+            pct = (val - data[col].iloc[0]) / data[col].iloc[0] * 100
+            st.metric(label=col, value=f"{val:.2f}", delta=f"{pct:.2f}%")
+else:
+    st.write("No data selected to display metrics.")
+
+# --- Time Series Plot ---
+fig = go.Figure()
+for col in data.columns:
+    fig.add_trace(
+        go.Scatter(x=data.index, y=data[col], mode='lines', name=col)
+    )
+
+# --- ARIMA Forecast ---
+if not data.empty:
+    primary = data.iloc[:, 0]
+    last_date = primary.index[-1]
+    freq = primary.index.freq or pd.infer_freq(primary.index) or 'M'
+    with st.spinner("Fitting ARIMA model..."):
+        model = ARIMA(primary, order=(p, d, q)).fit()
+        pred = model.get_forecast(steps=horizon)
+        fc_index = pd.date_range(
+            start=last_date, periods=horizon+1, freq=freq
+        )[1:]
+        fc_mean = pd.Series(pred.predicted_mean, index=fc_index)
+        fc_ci = pd.DataFrame(
+            pred.conf_int(), index=fc_index, columns=['lower', 'upper']
+        )
+    fig.add_trace(
+        go.Scatter(x=fc_mean.index, y=fc_mean.values, mode='lines', name='Forecast')
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=fc_ci.index,
+            y=fc_ci['upper'],
+            mode='lines',
+            line=dict(dash='dash'),
+            name='Upper CI'
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=fc_ci.index,
+            y=fc_ci['lower'],
+            mode='lines',
+            line=dict(dash='dash'),
+            name='Lower CI'
+        )
+    )
+
+fig.update_layout(
+    title="Macro Series & ARIMA Forecast",
+    xaxis_title="Date",
+    yaxis_title="Value",
+    legend=dict(orientation="h", y=-0.2)
+)
+st.plotly_chart(fig, use_container_width=True)
+
+# --- Download CSV ---
+hist = data.copy()
+if 'fc_mean' in locals():
+    hist = hist.join(fc_mean.rename('Forecast'), how='outer')
+    hist = hist.join(fc_ci, how='outer')
+csv = hist.to_csv().encode('utf-8')
+st.download_button(
+    "Download CSV", csv, "macro_data.csv", "text/csv"
+)
+
+# --- Interpretation & Guidance ---
+st.markdown("---")
+st.header("Interpretation & Guidance")
+st.markdown(
+    """
+- **Blue lines** show historical values for each indicator.
+- **Orange line** shows the ARIMA forecast for the next periods.
+- **Dashed bands** represent the 95% confidence interval.
+- Adjust the ARIMA parameters and forecast horizon to explore different scenarios.
+    """
+)
