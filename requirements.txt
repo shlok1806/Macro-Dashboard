@@ -3,4 +3,3 @@ pandas-datareader
 statsmodels
 pandas
 plotly
-pmdarima
